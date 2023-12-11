@@ -1,4 +1,4 @@
-package clock
+package example
 
 import akka.actor.typed.Behavior
 import akka.actor.typed.scaladsl.Behaviors
@@ -7,24 +7,31 @@ import akka.actor.typed.{ ActorRef, ActorSystem, Behavior }
 import akka.actor.typed.scaladsl._
 
 object EntryPoint {
-  val system: ActorSystem[LogicalClock.Command] = ActorSystem(LogicalClock(), "clock")
-  system ! LogicalClock.Tick(system)
+  val system: ActorSystem[TickTack.Command] = ActorSystem(TickTack(), "clock")
+  system ! TickTack.Tick(system)
 }
 
-object LogicalClock {
+object TickTack {
   sealed trait Command
   final case class Tick(replyTo: ActorRef[Command]) extends Command
-  final case class Tock(replyTo: ActorRef[Command]) extends Command
+  final case class Tack(replyTo: ActorRef[Command]) extends Command
 
   def apply(): Behavior[Command] = {
     Behaviors.setup { context =>
+      def log(text: String): Unit = {
+        context.log.info(text)
+        Thread.sleep(1000)
+      }
+
       Behaviors.receiveMessage {
         case Tick(replyTo) =>
-          context.log.info("Ticked")
-          replyTo ! Tock(context.self)
+          log("Ticked")
+
+          replyTo ! Tack(context.self)
           Behaviors.same
-        case Tock(replyTo) =>
-          context.log.info("Tocked")
+        case Tack(replyTo) =>
+          log("Tacked")
+
           replyTo ! Tick(context.self)
           Behaviors.same
       }
