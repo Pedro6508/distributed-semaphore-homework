@@ -12,7 +12,7 @@ case class V() extends Op
 sealed trait NetworkOps
 case class Request[T](op: Op, ts: Int) extends NetworkOps  // Request Operation P or V
 case class Execute[T](op: Op, ts: Int) extends NetworkOps  // Process Operation P or V
-case class ACK(lc: Int, id: Long) extends NetworkOps                 // Acknowledge Message
+case class ACK(lc: Int, id: Long) extends NetworkOps       // Acknowledge Message
 case class Broadcast(netOp: NetworkOps) extends NetworkOps
 
 sealed trait User
@@ -43,9 +43,11 @@ object User {
 }
 
 object Semaphore {
+
   case class NodeOp(id: Long, from: ActorRef[NetworkOps])
 
   def Network(nodes: List[NodeOp]): Behavior[Broadcast] = {
+    nodes.foreach(node => node.from ! Broadcast(Request(V(), 0)))
     Behaviors.receiveMessage {
       case Broadcast(op) => op match {
         case Execute(op, ts) =>
@@ -63,16 +65,20 @@ object Semaphore {
   private case class State(todo: List[TimeOp], s: Int) {
     implicit val ord: Ordering[TimeOp] = Ordering.by(_.ts)
 
-    def push(op: Op, ts: Int) = copy(todo = (op, ts) :: todo)
+    def push(op: Op, ts: Int) = copy(todo = TimeOp(op, ts) :: todo)
 
     def sort(f: (TimeOp, State) => State) = todo.sorted(ord).foldRight(State(List(), s)) {
       case (top, state) => f(top, state)
     }
   }
 
-  def Helper(network: ActorRef[Broadcast], user: ActorRef[User], id: Long): Behavior[NetworkOps] = {
+  def Helper(n: Int, id: Long): Behavior[NetworkOps] = {
     Behaviors.setup { context =>
-
+      val nodes = (1 to n).map(
+        id => NodeOp(id, context.self)
+      ).toList
+      val network = context.spawn(Network(nodes), "network")
+      val user = context.spawn(User(context.self, id), s"user$id")
 
       def helper(lc: Int)(implicit state: State): Behavior[NetworkOps] = {
         Behaviors.receiveMessage {
@@ -92,7 +98,7 @@ object Semaphore {
             val lc2 = lc1 + 1
 
             helper(lc2)(state.copy(
-              todo = (op, lc2) :: state.todo)
+              todo = TimeOp(op, lc2) :: state.todo)
             )
           case ACK(lc, id) =>
             val ls1 = state.sort((top, state) => top.op match {
