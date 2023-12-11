@@ -19,6 +19,6 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % "2.0.19",
       "dev.zio" %% "zio-test" % "2.0.19" % Test,
-    ),
+    ) ++ AkkaDependencies,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )

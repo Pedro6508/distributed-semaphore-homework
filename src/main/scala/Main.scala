@@ -1,7 +1,11 @@
+import akka.actor.typed.ActorSystem
+import clock.LogicalClock
 import zio._
 import zio.Console.printLine
 
-object Main extends ZIOAppDefault {
-  override def run: ZIO[Environment with ZIOAppArgs with Scope, Any, Any] =
-    printLine("Welcome to your first ZIO app!")
+object Main {
+  def main(args: Array[String]): Unit = {
+    val system = ActorSystem(LogicalClock(), "clock")
+    system ! LogicalClock.Tick(system)
+  }
 }
