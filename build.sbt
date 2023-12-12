@@ -16,9 +16,5 @@ val AkkaDependencies = Seq(
 lazy val root = (project in file("."))
   .settings(
     name := "Broadcast-Algorithms",
-    libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % "2.0.19",
-      "dev.zio" %% "zio-test" % "2.0.19" % Test,
-    ) ++ AkkaDependencies,
-    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+    libraryDependencies ++= Seq() ++ AkkaDependencies,
   )

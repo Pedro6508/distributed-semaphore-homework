@@ -17,7 +17,8 @@ object TickTack {
   final case class Tack(replyTo: ActorRef[Command]) extends Command
 
   def apply(): Behavior[Command] = {
-    Behaviors.setup { context =>
+    Behaviors.setup {
+      context =>
       def log(text: String): Unit = {
         context.log.info(text)
         Thread.sleep(1000)

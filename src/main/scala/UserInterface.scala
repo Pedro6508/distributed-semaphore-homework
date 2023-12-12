@@ -15,7 +15,7 @@ object UserInterface {
   case class NonCritical(ts: Int) extends Section
   case class DoSomething[T](ts: Int, work: State => T, replyTo: ActorRef[T]) extends Section
 
-  def passSomeWork[T](ts: Int, replyTo: ActorRef[T])(work: State => T) =
+  def passSomeWork[T](ts: Int, replyTo: ActorRef[T])(work: State => T): DoSomething[T] =
     DoSomething[T](ts, work, replyTo)
   def spawnUser(id: Long): Behavior[Section] = Implementation(id)
 
