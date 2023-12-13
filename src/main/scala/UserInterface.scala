@@ -1,49 +1,39 @@
+import ActorLogger.ActorLogger
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
 
 object UserInterface {
-  case class State(lc: Int) {
-    def tick: State = State(lc + 1)
-    def tick(ts: Int): State = State(math.max(lc, ts) + 1)
-    def send[T](data: T)(implicit replyTo: ActorRef[T]): State = {
-      replyTo ! data
-      tick
-    }
-  }
-  sealed trait Section
-  case class Critical(ts: Int) extends Section
-  case class NonCritical(ts: Int) extends Section
-  case class DoSomething[T](ts: Int, work: State => T, replyTo: ActorRef[T]) extends Section
+  sealed trait UserCommand
+  case class Critical(ts: Int) extends UserCommand
+  case class NonCritical(ts: Int) extends UserCommand
+  case class DoSomething[T](ts: Int, work: ClockState => T, replyTo: ActorRef[T]) extends UserCommand
 
-  def passSomeWork[T](ts: Int, replyTo: ActorRef[T])(work: State => T): DoSomething[T] =
+  def passSomeWork[T](ts: Int, replyTo: ActorRef[T])(work: ClockState => T): DoSomething[T] =
     DoSomething[T](ts, work, replyTo)
-  def spawnUser(id: Long): Behavior[Section] = Implementation(id)
+  def spawnUser(id: Long): Behavior[UserCommand] = Implementation(id)
 
   private object Implementation {
-    private def behavior(state: State)(implicit defaultProc: State => Unit): Behaviors.Receive[Section] = {
-      defaultProc(state)
-      Behaviors.receiveMessage[Section] {
+    private def behavior(state: ClockState)(implicit log: ActorLogger): Behaviors.Receive[UserCommand] = {
+      log.log(state)
+      Behaviors.receiveMessage[UserCommand] {
         case Critical(ts) => behavior {
+          log.log("Request V")
           state.tick(ts)
         }
-        case DoSomething(ts, work, replyTo) => behavior {
-          state.send {
-            work(state)
-          }(replyTo)
+        case NonCritical(ts) => behavior {
+          log.log("Request P")
           state.tick(ts)
         }
       }
     }
 
-    def apply(id: Long): Behavior[Section] = {
-      Behaviors.setup[Section] {
+    def apply(id: Long): Behavior[UserCommand] = {
+      Behaviors.setup[UserCommand] {
         context =>
-          def log(state: State): Unit = {
-            context.log.info(s"[$id]Node ${context.self.path.name} state: $state")
-            Thread.sleep(1000)
-          }
+          context.setLoggerName(s"[User $id]\t${context.self.path.name}: ")
+          val log = ActorLogger(context)
 
-          behavior(State(0))(log)
+          behavior(ClockState(0))(log)
       }
     }
   }
