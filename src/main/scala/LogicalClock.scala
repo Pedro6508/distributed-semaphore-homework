@@ -16,14 +16,14 @@ object ActorLogger {
     def log(str: String): Unit
   }
 
-  def apply[T](context: ActorContext[T]): ActorLogger = new ActorLogger {
+  def apply[T](context: ActorContext[T], name: String): ActorLogger = new ActorLogger {
     override def log(state: ClockState): Unit = {
-      context.log.info(s"state: $state")
+      context.log.info(s"[$name] clock: $state")
       Thread.sleep(1000)
     }
 
     override def log(str: String): Unit = {
-      context.log.info(str)
+      context.log.info(s"[$name] $str")
       Thread.sleep(1000)
     }
   }

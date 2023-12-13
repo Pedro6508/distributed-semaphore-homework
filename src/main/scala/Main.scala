@@ -1,27 +1,11 @@
-import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
-import UserInterface._
+import HelperInterface.{HelperCommand, NetworkCommand, spawnHelper}
+import UserInterface.spawnUser
+import akka.actor.typed.ActorSystem
 
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val user = ActorSystem(spawnUser(1), "user")
-    val system = Behaviors.setup[String] {
-      context =>
-        def log(str: String): Unit = {
-          context.log.info(s"[${context.self.path.name}] Received: $str")
-          user ! passSomeWork(1, context.self) {
-            state => s"Received the user state: $state"
-          }
-        }
-        Behaviors.receiveMessage[String] {
-          message => {
-            log(message)
-            Behaviors.same
-          }
-        }
-    }
-    val systemActor = ActorSystem(system, "system")
-    systemActor ! "Hello World!"
+    val helper: ActorSystem[HelperCommand] = ActorSystem(spawnHelper(0), "helper")
+    helper ! HelperInterface.Connect(0, List(helper.ref))
   }
 }
