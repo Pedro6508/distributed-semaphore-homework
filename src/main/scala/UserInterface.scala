@@ -8,11 +8,10 @@ object UserInterface {
   case class NonCritical(ts: Int, sender: Long) extends UserCommand
 
   def spawnUser(id: Long, helperRef: ActorRef[HelperInterface.HelperMsg]): ActorSystem[UserCommand] =
-    ActorSystem(Implementation(helperRef), s"user-$id")
+    ActorSystem(UserInterface.Implementation(helperRef), s"user-$id")
 
   private object Implementation {
     private def behavior(state: ClockState)(implicit log: ActorLogger, helper: ActorRef[HelperInterface.HelperMsg]): Behaviors.Receive[UserCommand] = {
-      log.log(state)
       Behaviors.receiveMessage[UserCommand] {
         case Critical(ts, id) => behavior {
           log.log("Request V")

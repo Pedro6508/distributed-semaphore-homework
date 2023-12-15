@@ -11,5 +11,6 @@ object Main {
     val network = (0 to 3).map(i => spawnHelper(i.toLong)).toList
 
     network.foreach(_ ! HelperInterface.Connect(s, network))
+    network.foreach(_ ! HelperInterface.POV(s, 0))
   }
 }

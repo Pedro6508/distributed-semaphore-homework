@@ -3,7 +3,7 @@ import UserInterface.{Critical, NonCritical}
 import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.Behaviors
 
-import scala.collection.immutable.{AbstractMap, SeqMap, SortedMap, SortedSet}
+import scala.collection.immutable.{AbstractMap, BitSet, SeqMap, SortedMap, SortedSet, TreeSet}
 import scala.language.implicitConversions
 
 object HelperInterface {
@@ -56,79 +56,88 @@ object HelperInterface {
   def spawnHelper(id: Long, s: Int = 0): ActorRef[HelperMsg] = ActorSystem(Implementation(id, s), s"helper-$id")
 
   private object Implementation {
-    case class SharedState(s: Int, todo: SortedSet[Operation], knowMap: Map[Operation, Boolean]) {
-      def markOp(op: Operation): SharedState = {
-        val newKnowMap: Map[Operation, Boolean] = knowMap.get(op) match {
-          case Some(isACK) =>
-            if (isACK) knowMap + (op -> isACK)
-            else knowMap + (op -> true)
-          case None => knowMap + (op -> false)
-        }
-
-        copy(knowMap = newKnowMap)
-      }
-
-      def isACK(op: Operation): Boolean = knowMap.getOrElse(op, false)
-
-      def push(op: Operation): SharedState = copy(todo = todo + op)
-
-      def updateSem(op: Operation): SharedState = op match {
-        case P(_, _) => copy(s = s + 1)
-        case V(_, _) => copy(s = s - 1)
-      }
-    }
-    case class State(clock: ClockState, shared: SharedState) {
+    case class SharedState(s: Int, todo: SortedSet[Operation])
+    case class State(clock: ClockState, shared: SharedState, onBroadcast: Map[Long, Int]) {
       def apply(f: State => State): State = f(this)
       def flatMap[A](f: State => A)(g: A => State): State = g(f(this))
     }
 
-    case class Helper(id: Long, self: ActorRef[HelperMsg], network: List[ActorRef[HelperMsg]]) {
+    case class Helper(id: Long, self: ActorRef[HelperMsg], user: ActorRef[UserInterface.UserCommand], network: List[ActorRef[HelperMsg]]) {
       def log(state: State): ClockState = state.clock
 
-      private def broadcast(state: State)(op: Operation): State = state.copy {
+      def broadcast(state: State)(op: Operation): State = state.copy {
         network.foldLeft(state.clock)(
           (clock, ref) => op.apply(clock)(ref)
         )
       }
 
-      def receive(state: State)(msg: HelperMsg)(implicit f: HelperMsg => Operation): State =
-        state.apply { st =>
-          if (st.shared.isACK(msg)) knowMsg(state)(msg)
-          else newMsg(state)(msg)
-        }
+      def clean(state: State): State = state.shared.todo.foldLeft(state) {
+        case (st, op) if (st.shared.s > 0)=>
+          lazy val s =
+            if (op.isInstanceOf[V]) st.shared.s + 1
+            else st.shared.s - 1
+          lazy val goUser =
+            if (op.isInstanceOf[P])
+              st.clock.send(Critical(op.time, id))(user)
+            else
+              st.clock.send(Critical(op.time, id))(user)
 
-      private def knowMsg(state: State)(msg: HelperMsg)(implicit f: HelperMsg => Operation): State =
+          st.copy(
+            clock = if (op.from == id) goUser else st.clock,
+            shared = st.shared.copy(
+              todo = st.shared.todo - op,
+              s = s
+            )
+          )
+        case (st, _) => st
+      }
+
+      def onBroadcast(state: State)(msg: HelperMsg)(implicit f: HelperMsg => Operation): State = {
         state.copy(
-          clock = state.clock.tick(msg.time),
-          shared = state.shared.push(msg)
+          onBroadcast = state.onBroadcast.updated(msg.from, state.onBroadcast.getOrElse(msg.from, 0) + 1),
+          clock = state.clock.tick(msg.time)
         )
+      }
 
-      private def newMsg(state: State)(msg: HelperMsg)(implicit f: HelperMsg => Operation): State = {
+      def newMsg(state: State)(msg: HelperMsg)(implicit f: HelperMsg => Operation): State = {
         broadcast(state)(msg).copy(
           clock = state.clock.tick(msg.time),
-          shared = state.shared.markOp(msg)
+          onBroadcast = state.onBroadcast + (msg.from -> 1),
+          shared = state.shared.copy(todo = state.shared.todo + msg)
         )
       }
     }
 
     private def behavior(helper: Helper)(state: State)
       (implicit log: ActorLogger, convert: HelperMsg => Operation): Behavior[HelperMsg] = {
-      log.log(state.clock)
-
+      log.log(s"[${state.clock.lc}] Shared: ${state.shared}")
       Behaviors.receiveMessage[HelperMsg] {
         case Connect(firstTick: Int, network) =>
           behavior(helper.copy(network = network)) {
             log.log(s"Connect | s0: $firstTick | Network: [${network.map(_.path.name).mkString(", ")}]")
+            helper.user ! NonCritical(firstTick, helper.id)
             state.copy(
               clock = state.clock.tick(firstTick),
               shared = state.shared.copy(s = firstTick)
             )
           }
-        case msg => helper.receive(state)(msg)(convert) match {
-          case newState @ State(_, SharedState(s, _, _)) =>
-            log.log(s"Shared State: s = $s")
-            behavior(helper)(newState)
-        }
+        case msg @ (POV(_, _) | VOV(_, _)) => state.onBroadcast.getOrElse(msg.from, 0) match {
+            case 0 =>
+              log.log(s"New message: $msg")
+              behavior(helper)(helper.newMsg(state)(msg))
+            case counter if counter == helper.network.size =>
+              log.log(s"Message from all: $msg")
+              behavior(helper)(helper.clean(state))
+            case counter =>
+              log.log(s"Message from ${counter}/${helper.network.size}: $msg")
+              behavior(helper)(helper.onBroadcast(state)(msg))
+          }
+        case msg @ (ReqV(_, _) | ReqP(_, _)) =>
+          log.log(s"Request: $msg")
+          behavior(helper)(helper.broadcast(state)(msg))
+        case _ =>
+            log.log(s"Unknown message")
+            behavior(helper)(state)
       }
     }
 
@@ -141,16 +150,14 @@ object HelperInterface {
       Behaviors.setup[HelperMsg] {
         context =>
           val user = UserInterface.spawnUser(id, context.self)
-          val helper = Helper(id, context.self, List(context.self))
+          val helper = Helper(id, context.self, user, List(context.self))
           val state = State(
             ClockState.apply(0),
-            SharedState(s = s0, todo = SortedSet[Operation](), Map[Operation, Boolean]())
+            SharedState(s = s0, todo = SortedSet[Operation]()),
+            Map[Long, Int]()
           )
 
           val logger = ActorLogger(context, s"helper-$id")
-          user ! NonCritical(0, id)
-          user ! Critical(0, id)
-
           behavior(helper)(state)(logger, convert)
       }
     }
