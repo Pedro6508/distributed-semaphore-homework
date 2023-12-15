@@ -1,12 +1,7 @@
-import akka.actor.typed.scaladsl.ActorContext
 import akka.actor.typed.ActorRef
+import akka.actor.typed.scaladsl.ActorContext
 
-import scala.collection.immutable.SortedSet
 import scala.language.implicitConversions
-
-trait Timed[T] {
-  def time: Int
-}
 
 case class ClockState(lc: Int) {
   def tick: ClockState = copy(lc = lc + 1)

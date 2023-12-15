@@ -1,12 +1,14 @@
 import ActorLogger.ActorLogger
 import UserInterface.{Critical, NonCritical}
-import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 
-import scala.collection.immutable.{AbstractMap, BitSet, SeqMap, SortedMap, SortedSet, TreeSet}
+import scala.annotation.unused
+import scala.collection.immutable.SortedSet
 import scala.language.implicitConversions
 
 object HelperInterface {
+  @unused
   sealed trait Operation extends Ordered[Operation]{
     override def compare(that: Operation): Int = this.time - that.time
 
@@ -26,8 +28,8 @@ object HelperInterface {
         case V(ts, sender) => clock.send(VOV(ts, sender))(replyTo)
       }
   }
-  final case class P(ts: Int, sender: Long) extends Operation
-  final case class V(ts: Int, sender: Long) extends Operation
+  private final case class P(ts: Int, sender: Long) extends Operation
+  private final case class V(ts: Int, sender: Long) extends Operation
 
   sealed trait HelperMsg {
     def time: Int = this match {
@@ -49,7 +51,7 @@ object HelperInterface {
   case class Connect(firstTick: Int, network: List[ActorRef[HelperMsg]]) extends NetworkCommand
 
   case class POV(ts: Int, sender: Long) extends HelperMsg
-  case class VOV(ts: Int, sender: Long) extends HelperMsg
+  private case class VOV(ts: Int, sender: Long) extends HelperMsg
   case class ReqV(ts: Int, sender: Long) extends HelperMsg
   case class ReqP(ts: Int, sender: Long) extends HelperMsg
 
@@ -62,9 +64,7 @@ object HelperInterface {
       def flatMap[A](f: State => A)(g: A => State): State = g(f(this))
     }
 
-    case class Helper(id: Long, self: ActorRef[HelperMsg], user: ActorRef[UserInterface.UserCommand], network: List[ActorRef[HelperMsg]]) {
-      def log(state: State): ClockState = state.clock
-
+    private case class Helper(id: Long, self: ActorRef[HelperMsg], user: ActorRef[UserInterface.UserCommand], network: List[ActorRef[HelperMsg]]) {
       def broadcast(state: State)(op: Operation): State = state.copy {
         network.foldLeft(state.clock)(
           (clock, ref) => op.apply(clock)(ref)
@@ -72,7 +72,7 @@ object HelperInterface {
       }
 
       def clean(state: State): State = state.shared.todo.foldLeft(state) {
-        case (st, op) if (st.shared.s > 0)=>
+        case (st, op) if st.shared.s > 0 =>
           lazy val s =
             if (op.isInstanceOf[V]) st.shared.s + 1
             else st.shared.s - 1
@@ -92,7 +92,7 @@ object HelperInterface {
         case (st, _) => st
       }
 
-      def onBroadcast(state: State)(msg: HelperMsg)(implicit f: HelperMsg => Operation): State = {
+      def onBroadcast(state: State)(msg: HelperMsg): State = {
         state.copy(
           onBroadcast = state.onBroadcast.updated(msg.from, state.onBroadcast.getOrElse(msg.from, 0) + 1),
           clock = state.clock.tick(msg.time)
@@ -121,23 +121,27 @@ object HelperInterface {
               shared = state.shared.copy(s = firstTick)
             )
           }
-        case msg @ (POV(_, _) | VOV(_, _)) => state.onBroadcast.getOrElse(msg.from, 0) match {
+        case msg @ (POV(_, _) | VOV(_, _)) => behavior(helper) {
+          state.onBroadcast.getOrElse(msg.from, 0) match {
             case 0 =>
               log.log(s"New message: $msg")
-              behavior(helper)(helper.newMsg(state)(msg))
+              helper.newMsg(state)(msg)
             case counter if counter == helper.network.size =>
               log.log(s"Message from all: $msg")
-              behavior(helper)(helper.clean(state))
+              helper.clean(state)
             case counter =>
-              log.log(s"Message from ${counter}/${helper.network.size}: $msg")
-              behavior(helper)(helper.onBroadcast(state)(msg))
+              log.log(s"Message from $counter/${helper.network.size}: $msg")
+              helper.onBroadcast(state)(msg)
           }
-        case msg @ (ReqV(_, _) | ReqP(_, _)) =>
+        }
+        case msg @ (ReqV(_, _) | ReqP(_, _)) => behavior(helper) {
           log.log(s"Request: $msg")
-          behavior(helper)(helper.broadcast(state)(msg))
-        case _ =>
-            log.log(s"Unknown message")
-            behavior(helper)(state)
+          helper.broadcast(state)(msg)
+        }
+        case _ => behavior(helper) {
+          log.log(s"Unknown message")
+          state
+        }
       }
     }
 
